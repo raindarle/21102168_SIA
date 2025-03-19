@@ -10,12 +10,20 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@apollo/server": "^4.11.3",
+    "@graphql-tools/schema": "^10.0.23",
     "@prisma/client": "^6.5.0",
     "apollo-server": "^3.13.0",
+    "body-parser": "^1.20.3",
+    "cors": "^2.8.5",
+    "express": "^4.21.2",
     "graphql": "^16.10.0",
+    "graphql-subscriptions": "^3.0.0",
+    "graphql-tag": "^2.12.6",
+    "graphql-ws": "^5.16.2",
     "prisma": "^6.5.0",
-    "sqlite3": "^5.1.7"
+    "sqlite3": "^5.1.7",
+    "ws": "^8.18.1"
   },
-  "devDependencies": {},
   "description": ""
 }
