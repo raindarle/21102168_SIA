@@ -1,19 +1,21 @@
-import { ApolloClient, InMemoryCache, ApolloProvider, split, HttpLink } from "@apollo/client";
-import { WebSocketLink } from "@apollo/client/link/ws";
+import { ApolloClient, InMemoryCache, split, HttpLink } from "@apollo/client";
+import { GraphQLWsLink } from "@apollo/client/link/subscriptions";
+import { createClient } from "graphql-ws";
 import { getMainDefinition } from "@apollo/client/utilities";
 
+// HTTP Link for Queries and Mutations
 const httpLink = new HttpLink({
-  uri: "http://localhost:4000/graphql", // Update if your backend URL is different
+  uri: "http://localhost:4000/graphql",
 });
 
-const wsLink = new WebSocketLink({
-  uri: "ws://localhost:4000/graphql", // WebSocket for subscriptions
-  options: {
-    reconnect: true,
-  },
-});
+// WebSocket Link for Subscriptions using graphql-ws
+const wsLink = new GraphQLWsLink(
+  createClient({
+    url: "ws://localhost:4000/graphql",
+  })
+);
 
-// Split between HTTP and WebSocket
+// Use split to send data to each link depending on the kind of operation
 const splitLink = split(
   ({ query }) => {
     const definition = getMainDefinition(query);
@@ -26,6 +28,7 @@ const splitLink = split(
   httpLink
 );
 
+// Apollo Client
 const client = new ApolloClient({
   link: splitLink,
   cache: new InMemoryCache(),

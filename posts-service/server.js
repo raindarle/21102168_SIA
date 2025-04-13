@@ -39,55 +39,70 @@ const typeDefs = gql`
   }
 `;
 
+// Helper: async iterator from EventEmitter
+function createAsyncIterator(eventName) {
+  const iterator = {
+    next: () =>
+      new Promise((resolve) => {
+        const handler = (payload) => {
+          resolve({ value: { postAdded: payload }, done: false });
+        };
+        eventEmitter.once(eventName, handler);
+      }),
+    return: () => {
+      return Promise.resolve({ value: undefined, done: true });
+    },
+    throw: (error) => {
+      return Promise.reject(error);
+    },
+    [Symbol.asyncIterator]() {
+      return this;
+    },
+  };
+  return iterator;
+}
+
 const resolvers = {
   Query: {
     posts: () => prisma.post.findMany(),
-    post: (_, { id }) => prisma.post.findUnique({ where: { id: Number(id) } }),
+    post: (_, { id }) =>
+      prisma.post.findUnique({ where: { id: Number(id) } }),
   },
   Mutation: {
     createPost: async (_, { title, content }) => {
       const newPost = await prisma.post.create({ data: { title, content } });
-
-      // Emit the event for subscriptions
       eventEmitter.emit(POST_ADDED, newPost);
-
       return newPost;
     },
     updatePost: (_, { id, title, content }) =>
-      prisma.post.update({ where: { id: Number(id) }, data: { title, content } }),
+      prisma.post.update({
+        where: { id: Number(id) },
+        data: { title, content },
+      }),
     deletePost: (_, { id }) =>
       prisma.post.delete({ where: { id: Number(id) } }),
   },
   Subscription: {
     postAdded: {
-      subscribe: async function* () {
-        while (true) {
-          yield new Promise((resolve) =>
-            eventEmitter.once(POST_ADDED, (data) => resolve({ postAdded: data }))
-          );
-        }
-      },
+      subscribe: () => createAsyncIterator(POST_ADDED),
     },
   },
 };
 
-// Create GraphQL schema
+// Create schema
 const schema = makeExecutableSchema({ typeDefs, resolvers });
 
-// Create Express app
+// Setup Express and HTTP server
 const app = express();
 app.use(cors());
 app.use(bodyParser.json());
-
-// Create HTTP server
 const httpServer = http.createServer(app);
 
-// Create WebSocket server for subscriptions
+// Setup WebSocket server for subscriptions
 const wsServer = new WebSocketServer({
   server: httpServer,
   path: "/graphql",
 });
-
 useServer({ schema }, wsServer);
 
 // Start Apollo Server
