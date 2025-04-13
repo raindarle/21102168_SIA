@@ -10,6 +10,8 @@ const { WebSocketServer } = require("ws");
 const { useServer } = require("graphql-ws/lib/use/ws");
 const { EventEmitter } = require("events");
 const bodyParser = require("body-parser");
+const { connectQueue, QUEUE_NAME } = require('./config/rabbitmq');
+const amqp = require('amqplib');
 
 const prisma = new PrismaClient();
 const eventEmitter = new EventEmitter();
@@ -62,32 +64,85 @@ function createAsyncIterator(eventName) {
   return iterator;
 }
 
+let channel;
+
+// Initialize RabbitMQ connection
+async function initializeRabbitMQ() {
+    const { channel: ch } = await connectQueue();
+    channel = ch;
+}
+
+initializeRabbitMQ().catch(console.error);
+
+// In your resolvers, add RabbitMQ messaging
+// Fix the variable name from rabbitChannel to channel in createPost
 const resolvers = {
   Query: {
     posts: () => prisma.post.findMany(),
-    post: (_, { id }) =>
-      prisma.post.findUnique({ where: { id: Number(id) } }),
+    post: (_, { id }) => prisma.post.findUnique({ where: { id: Number(id) } })
   },
   Mutation: {
     createPost: async (_, { title, content }) => {
-      const newPost = await prisma.post.create({ data: { title, content } });
-      eventEmitter.emit(POST_ADDED, newPost);
-      return newPost;
-    },
-    updatePost: (_, { id, title, content }) =>
-      prisma.post.update({
-        where: { id: Number(id) },
+      const post = await prisma.post.create({
         data: { title, content },
-      }),
-    deletePost: (_, { id }) =>
-      prisma.post.delete({ where: { id: Number(id) } }),
+      });
+      
+      // Log and send to RabbitMQ
+      console.log(`New post subscription: ${JSON.stringify(post)}`);
+      if (channel) {
+        channel.sendToQueue(
+          QUEUE_NAME,
+          Buffer.from(JSON.stringify({ type: 'POST_CREATED', post }))
+        );
+      }
+
+      // Emit for GraphQL subscription
+      eventEmitter.emit(POST_ADDED, post);
+      
+      return post;
+    },
+    
+    updatePost: async (_, { id, title, content }) => {
+      const post = await prisma.post.update({
+        where: { id: Number(id) },
+        data: { title, content }
+      });
+      
+      if (channel) {
+        channel.sendToQueue(
+            QUEUE_NAME,  // Use consistent QUEUE_NAME instead of hardcoded string
+            Buffer.from(JSON.stringify({ type: 'POST_UPDATED', post }))
+        );
+      }
+      
+      return post;
+    },
+    
+    deletePost: async (_, { id }) => {
+      const post = await prisma.post.delete({
+        where: { id: Number(id) }
+      });
+      
+      if (channel) {
+        channel.sendToQueue(
+            QUEUE_NAME,  // Use consistent QUEUE_NAME instead of hardcoded string
+            Buffer.from(JSON.stringify({ type: 'POST_DELETED', id }))
+        );
+      }
+      
+      return post;
+    }
   },
+  // Fix the Subscription resolver syntax
   Subscription: {
     postAdded: {
       subscribe: () => createAsyncIterator(POST_ADDED),
     },
-  },
+  }
 };
+
+// Remove extra closing brace
+
 
 // Create schema
 const schema = makeExecutableSchema({ typeDefs, resolvers });
@@ -122,3 +177,12 @@ async function startServer() {
 }
 
 startServer();
+
+// Add RabbitMQ connection setup
+async function setupRabbitMQ() {
+  const connection = await amqp.connect('amqp://localhost');
+  const channel = await connection.createChannel();
+  const queue = 'posts_queue';
+  await channel.assertQueue(queue);
+  return { connection, channel, queue };
+}

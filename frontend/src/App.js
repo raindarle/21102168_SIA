@@ -1,6 +1,7 @@
 import React, { useEffect } from "react";
 import { useQuery, useMutation, useSubscription, gql } from "@apollo/client";
 import { Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Paper, TextField, Button } from "@mui/material";
+import { rabbitmqService } from './services/rabbitmqService';
 
 // GraphQL Queries
 const GET_POSTS = gql`
@@ -34,9 +35,19 @@ const POST_SUBSCRIPTION = gql`
 `;
 
 const App = () => {
-  const { loading, error, data } = useQuery(GET_POSTS);
-  const [createPost] = useMutation(CREATE_POST);
-  const { data: subscriptionData } = useSubscription(POST_SUBSCRIPTION);
+  const { loading, error, data, refetch } = useQuery(GET_POSTS);
+  const [createPost] = useMutation(CREATE_POST, {
+    onCompleted: () => {
+      refetch(); // Refetch posts after mutation
+    }
+  });
+  const { data: subscriptionData } = useSubscription(POST_SUBSCRIPTION, {
+    onData: ({ data }) => {
+      if (data?.data?.postAdded) {
+        setPosts(prevPosts => [data.data.postAdded, ...prevPosts]);
+      }
+    }
+  });
 
   const [title, setTitle] = React.useState("");
   const [content, setContent] = React.useState("");
@@ -44,24 +55,32 @@ const App = () => {
 
   // Update posts when data is fetched
   useEffect(() => {
-    if (data) {
+    if (data?.posts) {
       setPosts(data.posts);
     }
   }, [data]);
 
-  // Update posts when a new post is received via subscription
-  useEffect(() => {
-    if (subscriptionData) {
-      setPosts((prevPosts) => [subscriptionData.postAdded, ...prevPosts]);
-    }
-  }, [subscriptionData]);
-
   // Handle form submission
   const handleCreatePost = async () => {
     if (!title || !content) return;
-    await createPost({ variables: { title, content } });
-    setTitle("");
-    setContent("");
+    try {
+      await createPost({ 
+        variables: { title, content },
+        update: (cache, { data: { createPost } }) => {
+          const existingPosts = cache.readQuery({ query: GET_POSTS });
+          cache.writeQuery({
+            query: GET_POSTS,
+            data: {
+              posts: [createPost, ...existingPosts.posts]
+            }
+          });
+        }
+      });
+      setTitle("");
+      setContent("");
+    } catch (error) {
+      console.error("Error creating post:", error);
+    }
   };
 
   if (loading) return <p>Loading...</p>;
